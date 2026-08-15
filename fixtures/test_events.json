@@ -1,0 +1,87 @@
+[
+  {
+    "event_id": "evt-normal-001",
+    "timestamp": "2026-08-15T10:00:00Z",
+    "source": "BankA",
+    "user_id": "user-101",
+    "amount": 45.50,
+    "category": "groceries",
+    "description": "Supermarket purchase",
+    "merchant": "Walmart",
+    "status": "completed",
+    "email": "alice@example.com",
+    "phone": "+15550101"
+  },
+  {
+    "event_id": "evt-normal-001",
+    "timestamp": "2026-08-15T10:00:00Z",
+    "source": "BankA",
+    "user_id": "user-101",
+    "amount": 45.50,
+    "category": "groceries",
+    "description": "Supermarket purchase",
+    "merchant": "Walmart",
+    "status": "completed",
+    "email": "alice@example.com",
+    "phone": "+15550101"
+  },
+  {
+    "event_id": "evt-normal-002",
+    "timestamp": "2026-08-15T10:05:00Z",
+    "source": "CardY",
+    "user_id": "user-101",
+    "amount": 120.00,
+    "category": "electronics",
+    "description": "Headphones",
+    "merchant": "BestBuy",
+    "status": "completed",
+    "email": "alice@example.com",
+    "phone": "+15550101"
+  },
+  {
+    "event_id": "evt-late-003",
+    "timestamp": "2026-08-15T09:30:00Z",
+    "source": "BankA",
+    "user_id": "user-101",
+    "amount": 30.00,
+    "category": "dining",
+    "description": "Coffee shop",
+    "merchant": "Starbucks",
+    "status": "completed",
+    "email": "alice@example.com",
+    "phone": "+15550101"
+  },
+  {
+    "event_id": "evt-conflict-004",
+    "timestamp": "2026-08-15T10:06:00Z",
+    "source": "BankA",
+    "user_id": "user-101",
+    "amount": 150.00,
+    "category": "electronics",
+    "description": "Headphones pro",
+    "merchant": "BestBuy",
+    "status": "completed",
+    "email": "alice@example.com",
+    "phone": "+15550101"
+  },
+  {
+    "event_id": "evt-id-mismatch-005",
+    "timestamp": "2026-08-15T10:10:00Z",
+    "source": "BankA",
+    "user_id": "user-101",
+    "amount": 80.00,
+    "category": "clothing",
+    "description": "Jacket",
+    "merchant": "Zara",
+    "status": "completed",
+    "email": "alice.new@example.com",
+    "phone": "+15550101"
+  },
+  {
+    "event_id": "evt-partial-006",
+    "timestamp": "2026-08-15T10:15:00Z",
+    "source": "WalletX",
+    "user_id": "user-102",
+    "amount": 25.00
+  }
+]
