@@ -40,6 +40,18 @@ def predict(features: list[float]) -> tuple[str, float]:
         dtype=float,
     ).reshape(1, -1)
 
+    expected_features = getattr(
+        model,
+        "n_features_in_",
+        None,
+    )
+
+    if expected_features is not None and values.shape[1] != expected_features:
+        raise ValueError(
+            "Anomaly model expected "
+            f"{expected_features} features but received {values.shape[1]}"
+        )
+
     prediction = int(model.predict(values)[0])
 
     score = float(

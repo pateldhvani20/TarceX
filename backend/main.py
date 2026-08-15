@@ -1,149 +1,41 @@
 import json
-import time
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import ValidationError
+from fastapi import FastAPI, Request, status
+from fastapi.responses import HTMLResponse
 
-from backend import config, database, persistence_repository
-from backend.core.pipelines import process_event
 from backend.database import create_tables
-from backend.schemas import IngestResponse, TransactionEvent, UserState
-
-
-def seed_demo_data_if_needed():
-    """Seed initial realistic transactions for hackathon demo if database is empty."""
-    with database.get_connection() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
-    if count >= 3:
-        return
-
-    demo_events = [
-        {
-            "event_id": "EV-992A-441",
-            "source": "BankA",
-            "user_id": "USR-001",
-            "timestamp": "2026-08-15T10:00:00Z",
-            "amount": 124.50,
-            "category": "Retail",
-            "merchant": "Acme Corp",
-            "description": "Store Purchase",
-            "status": "cleared",
-            "email": "e.vance@proxy-net.local",
-            "phone": "+15550198234"
-        },
-        {
-            "event_id": "EV-881B-772",
-            "source": "WalletX",
-            "user_id": "USR-842",
-            "timestamp": "2026-08-15T10:15:00Z",
-            "amount": 9450.00,
-            "category": "Wire Transfer",
-            "merchant": "Unknown Offshore",
-            "description": "High Value International Wire",
-            "status": "flagged",
-            "email": "usr842@offshore.org",
-            "phone": "+15559876543"
-        },
-        {
-            "event_id": "EV-773C-110",
-            "source": "BankA",
-            "user_id": "USR-044",
-            "timestamp": "2026-08-15T10:20:00Z",
-            "amount": 12.99,
-            "category": "Subscriptions",
-            "merchant": "Streaming Svc",
-            "description": "Monthly Streaming",
-            "status": "cleared",
-            "email": "usr044@example.com",
-            "phone": "+15551112233"
-        },
-        {
-            "event_id": "EV-664D-551",
-            "source": "BankA",
-            "user_id": "USR-112",
-            "timestamp": "2026-08-15T10:25:00Z",
-            "amount": 85.00,
-            "category": "Groceries",
-            "merchant": "Grocery Local",
-            "description": "Weekly Groceries",
-            "status": "cleared",
-            "email": "usr112@example.com",
-            "phone": "+15554445566"
-        },
-        {
-            "event_id": "EV-555E-229",
-            "source": "CardProcessor",
-            "user_id": "USR-901",
-            "timestamp": "2026-08-15T10:30:00Z",
-            "amount": 1200.00,
-            "category": "Electronics",
-            "merchant": "Electronics Hub",
-            "description": "Laptop Purchase",
-            "status": "cleared",
-            "email": "usr901@example.com",
-            "phone": "+15557778899"
-        },
-        {
-            "event_id": "EV-331X-001",
-            "source": "WalletX",
-            "user_id": "USR-001",
-            "timestamp": "2026-08-15T10:35:00Z",
-            "amount": 5000.00,
-            "category": "Crypto",
-            "merchant": "Unknown Exchange",
-            "description": "Identity Conflict Test Event",
-            "status": "pending",
-            "email": "conflict.vance@altmail.com",
-            "phone": "+15550199999"
-        }
-    ]
-
-    for evt_dict in demo_events:
-        evt = TransactionEvent.model_validate(evt_dict)
-        process_event(evt, raw_payload=json.dumps(evt_dict))
-
-
-from contextlib import asynccontextmanager
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    create_tables()
-    try:
-        seed_demo_data_if_needed()
-    except Exception as e:
-        print(f"Seed error: {e}")
-    yield
+from backend.schemas import TransactionEvent
+from backend.core.pipelines import process_event
 
 
 app = FastAPI(
     title="TraceX",
-    version="1.0.0",
     description=(
         "Real-Time Financial Transaction Anomaly Detection "
         "with Temporal Replay and Identity Resolution"
     ),
-    lifespan=lifespan,
+    version="1.0.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
+# ============================================================
+# STARTUP
+# ============================================================
+
+@app.on_event("startup")
+def startup() -> None:
+    """Initialize the local SQLite database."""
+    create_tables()
+
+
+# ============================================================
+# ROOT
+# ============================================================
 
 @app.get("/")
-def root():
-    frontend_path = Path(__file__).resolve().parent.parent / "frontend" / "overview.html"
-    if frontend_path.exists():
-        return FileResponse(frontend_path)
+def root() -> dict[str, str]:
     return {
         "service": "TraceX",
         "status": "running",
@@ -151,219 +43,291 @@ def root():
     }
 
 
+# ============================================================
+# HEALTH
+# ============================================================
+
 @app.get("/health")
-def health():
-    db_ok = False
-    try:
-        with database.get_connection() as conn:
-            conn.execute("SELECT 1")
-            db_ok = True
-    except Exception:
-        pass
-
-    model_ok = Path(config.model_path).exists()
-    audit_ok = Path(config.audit_log_path).parent.exists()
-
+def health() -> dict[str, str]:
     return {
-        "status": "healthy" if db_ok and model_ok else "degraded",
-        "backend": "ONLINE",
-        "sqlite": "CONNECTED" if db_ok else "DISCONNECTED",
-        "model": "LOADED" if model_ok else "MISSING",
-        "audit_log": "ACTIVE" if audit_ok else "INACTIVE",
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "status": "healthy",
+        "service": "TraceX",
     }
 
 
-@app.post("/ingest", response_model=IngestResponse, status_code=202)
-async def ingest(request: Request):
-    raw_bytes = await request.body()
-    try:
-        payload = json.loads(raw_bytes.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise HTTPException(
-            status_code=422,
-            detail="Request body must contain valid JSON.",
-        )
+# ============================================================
+# INGEST
+# ============================================================
 
-    try:
-        event = TransactionEvent.model_validate(payload)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=exc.errors(),
-        )
+@app.post(
+    "/ingest",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def ingest(
+    event: TransactionEvent,
+    request: Request,
+) -> dict[str, Any]:
+    """
+    Receive and process a financial transaction event.
 
-    return process_event(
-        event,
-        raw_payload=raw_bytes.decode("utf-8"),
+    FastAPI/Pydantic validates the JSON body before this function
+    is called. Invalid or missing required fields automatically
+    result in HTTP 422.
+    """
+
+    # Preserve the original JSON payload for audit/idempotency.
+    raw_payload = json.dumps(
+        event.model_dump(mode="json"),
+        sort_keys=True,
     )
 
+    # Record when the API received the event.
+    received_at = datetime.now(timezone.utc).isoformat()
+
+    # Use the single shared processing pipeline.
+    result = process_event(
+        event=event,
+        raw_payload=raw_payload,
+        received_at=received_at,
+    )
+
+    return result
+
+
+# ============================================================
+# STATS
+# ============================================================
 
 @app.get("/stats")
-def get_stats():
-    with database.get_connection() as conn:
-        events = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
-        decisions_rows = conn.execute("SELECT * FROM decisions").fetchall()
+def stats() -> dict[str, Any]:
+    """
+    Lightweight statistics endpoint.
 
-    decisions = [dict(r) for r in decisions_rows]
-    normal_cnt = sum(1 for d in decisions if d.get("model_label") == "normal")
-    anomalous_cnt = sum(1 for d in decisions if d.get("model_label") == "anomalous")
-    duplicate_cnt = sum(1 for d in decisions if d.get("is_duplicate"))
-    late_cnt = sum(1 for d in decisions if d.get("is_late"))
-    identity_conflicts_cnt = sum(1 for d in decisions if "Identity conflict" in (d.get("decision_reason") or ""))
+    Uses the existing SQLite database directly so the endpoint
+    remains independent of the frontend.
+    """
 
-    latest = decisions[-1]["decision_reason"] if decisions else "No transactions processed yet"
-    return {
-        "total_events": events,
-        "normal_count": normal_cnt,
-        "anomalous_count": anomalous_cnt,
-        "duplicate_count": duplicate_cnt,
-        "identity_conflicts_count": identity_conflicts_cnt,
-        "late_count": late_cnt,
-        "latest_decision": latest
-    }
-
-
-@app.get("/transactions")
-def get_transactions():
-    with database.get_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT e.event_id, e.source, e.user_id, e.event_time, e.received_at,
-                   e.amount, e.category, e.description, e.merchant, e.status,
-                   e.email, e.phone,
-                   d.decision_reason, d.model_label, d.model_score, d.is_duplicate, d.is_late, d.processed_at
-            FROM events e
-            LEFT JOIN decisions d ON e.event_id = d.event_id
-            ORDER BY e.event_time DESC, e.event_id DESC
-            """
-        ).fetchall()
-
-    result = []
-    for r in rows:
-        item = dict(r)
-        # determine decision string
-        if item.get("decision_reason") and "Identity conflict" in item["decision_reason"]:
-            item["decision"] = "updated"
-        elif item.get("decision_reason") and "Transaction conflict" in item["decision_reason"]:
-            item["decision"] = "updated"
-        elif item.get("is_duplicate"):
-            item["decision"] = "duplicate"
-        elif item.get("model_label"):
-            item["decision"] = item["model_label"]
-        else:
-            item["decision"] = "normal"
-        result.append(item)
-    return result
-
-
-@app.get("/transactions/{event_id}")
-def get_transaction_detail(event_id: str):
-    evt = persistence_repository.get_event(event_id)
-    if not evt:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-    dec = persistence_repository.get_decision(event_id)
-    usr = persistence_repository.get_user_state(evt["user_id"])
-    return {
-        "event": evt,
-        "decision": dec,
-        "user_state": usr.model_dump() if usr else None
-    }
-
-
-@app.post("/replay")
-@app.get("/replay")
-def trigger_replay():
-    import replay
-    start_time = time.time()
     try:
-        success = replay.run_replay()
-        exec_ms = int((time.time() - start_time) * 1000)
-    except Exception as e:
+        from backend.persistence_repository import (
+            get_all_events,
+            get_all_decisions,
+        )
+
+        events = get_all_events()
+        decisions = get_all_decisions()
+
+        normal = 0
+        anomalous = 0
+        duplicate = 0
+        identity_conflict = 0
+        updated = 0
+
+        for decision in decisions:
+            value = str(decision.get("model_label") or "").lower()
+            reason = str(decision.get("decision_reason") or "").lower()
+
+            if value == "normal":
+                normal += 1
+            elif value == "anomalous":
+                anomalous += 1
+
+            if "duplicate" in reason:
+                duplicate += 1
+
+            if "identity" in reason:
+                identity_conflict += 1
+
+            if "conflict" in reason:
+                updated += 1
+
         return {
-            "status": "FAIL",
-            "message": str(e),
-            "determinism": False
+            "total_events": len(events),
+            "total_decisions": len(decisions),
+            "normal": normal,
+            "anomalous": anomalous,
+            "duplicate": duplicate,
+            "identity_conflict": identity_conflict,
+            "updated": updated,
         }
 
-    with database.get_connection() as conn:
-        rows = conn.execute(
-            "SELECT event_id, event_time, user_id, amount, merchant FROM events ORDER BY event_time ASC"
-        ).fetchall()
-        events_list = [dict(r) for r in rows]
+    except Exception as exc:
+        return {
+            "total_events": 0,
+            "total_decisions": 0,
+            "normal": 0,
+            "anomalous": 0,
+            "duplicate": 0,
+            "identity_conflict": 0,
+            "updated": 0,
+            "error": str(exc),
+        }
 
-    return {
-        "status": "PASS" if success else "FAIL",
-        "determinism": True if success else False,
-        "message": "REPLAY VERIFIED" if success else "REPLAY FAILED",
-        "execution_time_ms": exec_ms,
-        "events_count": len(events_list),
-        "events": events_list
+
+# ============================================================
+# SIMPLE DASHBOARD
+# ============================================================
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard() -> str:
+    """
+    Lightweight backend dashboard.
+
+    The main Stitch frontend can later replace this.
+    """
+
+    return """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TraceX Dashboard</title>
+    <meta charset="UTF-8">
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f7f7f7;
+            margin: 0;
+            padding: 40px;
+        }
+
+        h1 {
+            color: #222;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns:
+                repeat(auto-fit, minmax(180px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .card {
+            background: white;
+            padding: 25px;
+            border-radius: 14px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+
+        .number {
+            font-size: 32px;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+
+        .label {
+            color: #666;
+        }
+
+        .links {
+            margin-top: 30px;
+        }
+
+        a {
+            margin-right: 20px;
+        }
+    </style>
+</head>
+
+<body>
+
+<h1>TraceX</h1>
+
+<p>
+Real-Time Financial Transaction Anomaly Detection
+with Temporal Replay and Identity Resolution
+</p>
+
+<div class="grid">
+
+    <div class="card">
+        <div class="label">Total Events</div>
+        <div class="number" id="events">-</div>
+    </div>
+
+    <div class="card">
+        <div class="label">Total Decisions</div>
+        <div class="number" id="decisions">-</div>
+    </div>
+
+    <div class="card">
+        <div class="label">Normal</div>
+        <div class="number" id="normal">-</div>
+    </div>
+
+    <div class="card">
+        <div class="label">Anomalous</div>
+        <div class="number" id="anomalous">-</div>
+    </div>
+
+    <div class="card">
+        <div class="label">Duplicates</div>
+        <div class="number" id="duplicate">-</div>
+    </div>
+
+    <div class="card">
+        <div class="label">Identity Conflicts</div>
+        <div class="number" id="identity">-</div>
+    </div>
+
+</div>
+
+<div class="links">
+
+    <a href="/docs" target="_blank">
+        API Documentation
+    </a>
+
+    <a href="/health" target="_blank">
+        Health
+    </a>
+
+    <a href="/stats" target="_blank">
+        Stats JSON
+    </a>
+
+</div>
+
+<script>
+
+async function loadStats() {
+
+    try {
+
+        const response = await fetch("/stats");
+        const data = await response.json();
+
+        document.getElementById("events").innerText =
+            data.total_events ?? 0;
+
+        document.getElementById("decisions").innerText =
+            data.total_decisions ?? 0;
+
+        document.getElementById("normal").innerText =
+            data.normal ?? 0;
+
+        document.getElementById("anomalous").innerText =
+            data.anomalous ?? 0;
+
+        document.getElementById("duplicate").innerText =
+            data.duplicate ?? 0;
+
+        document.getElementById("identity").innerText =
+            data.identity_conflict ?? 0;
+
+    } catch (error) {
+
+        console.error(error);
+
     }
+}
 
+loadStats();
 
-@app.get("/identities")
-def get_identities():
-    with database.get_connection() as conn:
-        user_rows = conn.execute("SELECT * FROM user_state").fetchall()
-        users = [dict(r) for r in user_rows]
+setInterval(loadStats, 3000);
 
-    result = []
-    for u in users:
-        user_id = u["user_id"]
-        with database.get_connection() as conn:
-            user_events = conn.execute(
-                "SELECT * FROM events WHERE user_id = ? ORDER BY event_time DESC", (user_id,)
-            ).fetchall()
-        evts = [dict(e) for e in user_events]
-        
-        # Calculate risk score
-        risk_score = 15
-        if len(evts) > 5:
-            risk_score += 20
-        for e in evts:
-            if (e.get("amount") or 0) > 5000:
-                risk_score += 40
-        risk_score = min(risk_score, 98)
+</script>
 
-        result.append({
-            "user_id": user_id,
-            "email": u.get("email") or (evts[0].get("email") if evts else "N/A"),
-            "phone": u.get("phone") or (evts[0].get("phone") if evts else "N/A"),
-            "txn_count_24hr": u.get("txn_count_24hr", len(evts)),
-            "average_amount_30d": u.get("average_amount_30d"),
-            "last_event_id": u.get("last_event_id"),
-            "risk_score": risk_score,
-            "events_count": len(evts),
-            "events": evts
-        })
-    return result
-
-
-@app.get("/audit")
-def get_audit():
-    audit_path = Path(config.audit_log_path)
-    records = []
-    if audit_path.exists():
-        with open(audit_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        records.append(json.loads(line))
-                    except Exception:
-                        pass
-    return records[::-1]  # Return newest first
-
-
-@app.post("/seed")
-def force_seed():
-    seed_demo_data_if_needed()
-    return {"status": "seeded"}
-
-
-# Serve static frontend files
-frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
-if frontend_dir.exists():
-    app.mount("/frontend", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
-    app.mount("/static", StaticFiles(directory=str(frontend_dir), html=True), name="static")
+</body>
+</html>
+"""

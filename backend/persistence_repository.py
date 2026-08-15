@@ -12,8 +12,14 @@ from backend.schemas import (
 def insert_event(
     event: TransactionEvent,
     raw_payload: str,
-    received_at: datetime,
+    received_at,
 ) -> bool:
+
+    # Handle both datetime and string types for received_at
+    if isinstance(received_at, str):
+        received_at_iso = received_at
+    else:
+        received_at_iso = received_at.isoformat()
 
     with get_connection() as connection:
         cursor = connection.execute(
@@ -40,7 +46,7 @@ def insert_event(
                 event.source,
                 event.user_id,
                 event.timestamp.isoformat(),
-                received_at.isoformat(),
+                received_at_iso,
                 event.amount,
                 event.category,
                 event.description,
@@ -206,3 +212,33 @@ def get_decision(event_id: str):
         ).fetchone()
 
         return dict(row) if row else None
+
+
+def get_all_events() -> list[dict]:
+    """Get all events from the database."""
+
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM events
+            ORDER BY event_time ASC, event_id ASC
+            """
+        ).fetchall()
+
+        return [dict(row) for row in rows]
+
+
+def get_all_decisions() -> list[dict]:
+    """Get all decisions from the database."""
+
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM decisions
+            ORDER BY processed_at ASC, event_id ASC
+            """
+        ).fetchall()
+
+        return [dict(row) for row in rows]

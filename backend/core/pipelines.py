@@ -31,8 +31,7 @@ def normalize_event(event):
         update={
             "category": event.category or "uncategorized",
             "merchant": event.merchant or "unknown merchant",
-            "description": event.description
-            or f"status {event.status or 'pending'}",
+            "description": event.description or "",
             "status": event.status or "pending",
         }
     )
@@ -75,6 +74,24 @@ def write_audit(
             )
             + "\n"
         )
+
+
+def raw_payload_to_text(raw_payload):
+    if isinstance(raw_payload, str):
+        return raw_payload
+
+    return json.dumps(
+        raw_payload,
+        default=str,
+        sort_keys=True,
+    )
+
+
+def raw_payload_data(raw_payload):
+    if isinstance(raw_payload, str):
+        return json.loads(raw_payload)
+
+    return raw_payload
 
 
 def build_features(event, history):
@@ -207,6 +224,8 @@ def process_event(
     if raw_payload is None:
         raw_payload = event.model_dump_json()
 
+    raw_payload = raw_payload_to_text(raw_payload)
+
     # =========================================================
     # 1. DUPLICATE CHECK
     # =========================================================
@@ -218,7 +237,10 @@ def process_event(
         original = get_decision(event.event_id)
 
         try:
-            is_same = (json.loads(raw_payload) == json.loads(existing["raw_payload"]))
+            is_same = (
+                raw_payload_data(raw_payload)
+                == raw_payload_data(existing["raw_payload"])
+            )
         except Exception:
             is_same = (raw_payload.strip() == existing["raw_payload"].strip())
 
