@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from backend.database import create_tables
@@ -17,6 +18,21 @@ app = FastAPI(
         "with Temporal Replay and Identity Resolution"
     ),
     version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5174",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 
@@ -161,6 +177,63 @@ def stats() -> dict[str, Any]:
             "updated": 0,
             "error": str(exc),
         }
+
+
+# ============================================================
+# TRANSACTIONS
+# ============================================================
+
+@app.get("/transactions")
+def transactions() -> dict[str, Any]:
+    """
+    Return persisted events with their processing decisions.
+
+    This is a read-only projection over the existing repository
+    functions so the frontend can display real pipeline output.
+    """
+
+    from backend.persistence_repository import (
+        get_all_decisions,
+        get_all_events,
+    )
+
+    decisions = {
+        decision["event_id"]: decision
+        for decision in get_all_decisions()
+    }
+
+    records = []
+
+    for event in get_all_events():
+        decision = decisions.get(event["event_id"], {})
+
+        records.append(
+            {
+                "event_id": event["event_id"],
+                "source": event["source"],
+                "user_id": event["user_id"],
+                "timestamp": event["event_time"],
+                "received_at": event["received_at"],
+                "amount": event["amount"],
+                "category": event["category"],
+                "description": event["description"],
+                "merchant": event["merchant"],
+                "status": event["status"],
+                "email": event["email"],
+                "phone": event["phone"],
+                "decision": decision.get("model_label"),
+                "decision_reason": decision.get("decision_reason"),
+                "model_score": decision.get("model_score"),
+                "is_duplicate": bool(decision.get("is_duplicate", 0)),
+                "is_late": bool(decision.get("is_late", 0)),
+                "processed_at": decision.get("processed_at"),
+            }
+        )
+
+    return {
+        "count": len(records),
+        "transactions": records,
+    }
 
 
 # ============================================================
